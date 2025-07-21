@@ -1,0 +1,2 @@
+healthConnectId,startTime,endTime,durationMinutes,remSleepDurationMinutes,deepSleepDurationMinutes,lightSleepDurationMinutes,awakeDurationMinutes,userId,requestTimestamp
+d439837e-a522-4d9c-a10a-ce6d412313df,2025-07-21T07:46:00Z,2025-07-21T10:32:00Z,166,0,32,115,14,anon_2db9dbbcb95c7bfc,1753124428196
