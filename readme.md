@@ -1,6 +1,4 @@
-# 🏥 API de Monitoramento de Saúde
-
-Uma API robusta para receber, processar e armazenar dados de saúde com **proteção automática de privacidade** através de anonimização.
+# 🏥 API de Monitoramento de quedas
 
 ## 🚀 Características
 
