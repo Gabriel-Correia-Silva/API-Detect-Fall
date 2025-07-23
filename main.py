@@ -7,7 +7,7 @@ import hmac
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from models import DetailedHealthAndSensorPayload
+from models import DetailedHealthAndSensorPayload, RawSpO2Data, RawPpgData, RingAccelerometerData # Importar os novos modelos
 from typing import List, Dict
 import json
 import threading
@@ -26,7 +26,7 @@ db_lock = threading.Lock()
 app = FastAPI(
     title="API de Monitoramento de Saúde",
     description="Recebe, processa e armazena dados de saúde e sensores com privacidade protegida.",
-    version="1.5.0"  # Versão com anonimização
+    version="1.7.0"  # Versão com anonimização e novos dados do anel
 )
 
 # --- FUNÇÕES DE PRIVACIDADE ---
@@ -37,11 +37,11 @@ def anonymize_user_id(original_user_id: str) -> str:
     """
     # Usa HMAC para gerar um hash seguro e consistente
     anonymous_id = hmac.new(
-        SECRET_KEY.encode('utf-8'), 
-        original_user_id.encode('utf-8'), 
+        SECRET_KEY.encode('utf-8'),
+        original_user_id.encode('utf-8'),
         hashlib.sha256
     ).hexdigest()[:16]  # Usa apenas os primeiros 16 caracteres para um ID mais compacto
-    
+
     return f"anon_{anonymous_id}"
 
 def anonymize_payload(payload: DetailedHealthAndSensorPayload) -> DetailedHealthAndSensorPayload:
@@ -49,109 +49,144 @@ def anonymize_payload(payload: DetailedHealthAndSensorPayload) -> DetailedHealth
     Cria uma cópia do payload com todos os userIds anonimizados.
     """
     anonymous_user_id = anonymize_user_id(payload.userId)
-    
-    # Criar uma cópia do payload com o userId anonimizado
+
     payload_dict = payload.model_dump()
     payload_dict['userId'] = anonymous_user_id
-    
-    # Anonimizar userIds em heart rate records
+
     for record in payload_dict['heartRateRecords']:
         record['userId'] = anonymous_user_id
-    
-    # Anonimizar userIds em sleep sessions
+
     for session in payload_dict['sleepSessions']:
         session['sessionSummary']['userId'] = anonymous_user_id
-    
-    # Anonimizar userIds em calorie records
+
     for calorie in payload_dict['calorieRecords']:
         calorie['userId'] = anonymous_user_id
-    
-    # Anonimizar userIds em oxygen saturation records
+
     for oxygen in payload_dict['oxygenSaturationRecords']:
         oxygen['userId'] = anonymous_user_id
     
-    # Recriar o payload com dados anonimizados
+    
+    #  (se tivessem userId):
+    # for reading in payload_dict['rawSpO2Readings']:
+    #     reading['userId'] = anonymous_user_id
+    # for reading in payload_dict['rawPpgReadings']:
+    #     reading['userId'] = anonymous_user_id
+    # for reading in payload_dict['ringAccelerometerReadings']:
+    #     reading['userId'] = anonymous_user_id
+
+
     return DetailedHealthAndSensorPayload(**payload_dict)
 
 # --- FUNÇÕES DA BASE DE DADOS (SQLITE) ---
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    
+
     # Tabelas existentes
     cursor.execute("""CREATE TABLE IF NOT EXISTS heart_rate (
-        userId TEXT, 
-        requestTimestamp INTEGER, 
-        timestamp INTEGER, 
-        bpm INTEGER, 
+        userId TEXT,
+        requestTimestamp INTEGER,
+        timestamp INTEGER,
+        bpm INTEGER,
         PRIMARY KEY (userId, timestamp)
     )""")
-    
+
     cursor.execute("""CREATE TABLE IF NOT EXISTS accelerometer (
-        userId TEXT, 
-        requestTimestamp INTEGER, 
-        timestamp INTEGER, 
-        x REAL, 
-        y REAL, 
+        userId TEXT,
+        requestTimestamp INTEGER,
+        timestamp INTEGER,
+        x REAL,
+        y REAL,
         z REAL
     )""")
-    
+
     cursor.execute("""CREATE TABLE IF NOT EXISTS gyroscope (
-        userId TEXT, 
-        requestTimestamp INTEGER, 
-        timestamp INTEGER, 
-        x REAL, 
-        y REAL, 
+        userId TEXT,
+        requestTimestamp INTEGER,
+        timestamp INTEGER,
+        x REAL,
+        y REAL,
         z REAL
     )""")
-    
+
     cursor.execute("""CREATE TABLE IF NOT EXISTS steps (
-        userId TEXT, 
-        requestTimestamp INTEGER, 
-        date TEXT, 
-        hour INTEGER, 
-        count INTEGER, 
+        userId TEXT,
+        requestTimestamp INTEGER,
+        date TEXT,
+        hour INTEGER,
+        count INTEGER,
         PRIMARY KEY (userId, date, hour)
     )""")
-    
+
     cursor.execute("""CREATE TABLE IF NOT EXISTS sleep_sessions (
-        userId TEXT, 
-        requestTimestamp INTEGER, 
-        sessionId TEXT PRIMARY KEY, 
-        startTime TEXT, 
-        endTime TEXT, 
+        userId TEXT,
+        requestTimestamp INTEGER,
+        sessionId TEXT PRIMARY KEY,
+        startTime TEXT,
+        endTime TEXT,
         durationMinutes INTEGER
     )""")
-    
+
     cursor.execute("""CREATE TABLE IF NOT EXISTS sleep_stages (
-        stageId INTEGER PRIMARY KEY AUTOINCREMENT, 
-        sessionId TEXT, 
-        type INTEGER, 
-        startTime TEXT, 
-        endTime TEXT, 
+        stageId INTEGER PRIMARY KEY AUTOINCREMENT,
+        sessionId TEXT,
+        type INTEGER,
+        startTime TEXT,
+        endTime TEXT,
         FOREIGN KEY (sessionId) REFERENCES sleep_sessions(sessionId)
     )""")
-    
-    # Novas tabelas para calorias e oxigenação
+
+    # Tabelas para calorias e oxigenação
     cursor.execute("""CREATE TABLE IF NOT EXISTS calories (
-        userId TEXT, 
-        requestTimestamp INTEGER, 
-        healthConnectId TEXT, 
-        startTime TEXT, 
-        endTime TEXT, 
-        kilocalorias REAL, 
+        userId TEXT,
+        requestTimestamp INTEGER,
+        healthConnectId TEXT,
+        startTime TEXT,
+        endTime TEXT,
+        kilocalorias REAL,
         tipo TEXT,
         PRIMARY KEY (userId, healthConnectId)
     )""")
-    
+
     cursor.execute("""CREATE TABLE IF NOT EXISTS oxygen_saturation (
-        userId TEXT, 
-        requestTimestamp INTEGER, 
-        timestamp INTEGER, 
+        userId TEXT,
+        requestTimestamp INTEGER,
+        timestamp INTEGER,
         spo2 REAL,
         PRIMARY KEY (userId, timestamp)
     )""")
-    
+
+    # NOVO: Tabelas para dados brutos de SpO2 e PPG do anel
+    cursor.execute("""CREATE TABLE IF NOT EXISTS raw_spo2 (
+        userId TEXT,
+        requestTimestamp INTEGER,
+        timestamp INTEGER,
+        raw INTEGER,
+        a INTEGER,
+        b INTEGER,
+        c INTEGER
+    )""")
+
+    cursor.execute("""CREATE TABLE IF NOT EXISTS raw_ppg (
+        userId TEXT,
+        requestTimestamp INTEGER,
+        timestamp INTEGER,
+        raw INTEGER,
+        max INTEGER,
+        min INTEGER,
+        diff INTEGER
+    )""")
+
+    # NOVO: Tabela para dados de acelerômetro do anel
+    cursor.execute("""CREATE TABLE IF NOT EXISTS ring_accelerometer (
+        userId TEXT,
+        requestTimestamp INTEGER,
+        timestamp INTEGER,
+        x REAL,
+        y REAL,
+        z REAL
+    )""")
+
     conn.commit()
     conn.close()
     print(f"Base de dados '{DB_FILE}' inicializada com sucesso.")
@@ -159,60 +194,78 @@ def init_db():
 def save_to_sql(payload: DetailedHealthAndSensorPayload):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    
+
     try:
         # Heart Rate Records
         for record in payload.heartRateRecords:
-            cursor.execute("""INSERT OR IGNORE INTO heart_rate VALUES (?, ?, ?, ?)""", 
+            cursor.execute("""INSERT OR IGNORE INTO heart_rate VALUES (?, ?, ?, ?)""",
                          (payload.userId, payload.timestamp, record.timestamp, record.bpm))
-        
-        # Accelerometer Readings
+
+        # Accelerometer Readings (telefone)
         for reading in payload.accelerometerReadings:
-            cursor.execute("""INSERT INTO accelerometer VALUES (?, ?, ?, ?, ?, ?)""", 
-                         (payload.userId, payload.timestamp, reading.timestamp, 
+            cursor.execute("""INSERT INTO accelerometer VALUES (?, ?, ?, ?, ?, ?)""",
+                         (payload.userId, payload.timestamp, reading.timestamp,
                           reading.x, reading.y, reading.z))
-        
+
         # Gyroscope Readings
         for reading in payload.gyroscopeReadings:
-            cursor.execute("""INSERT INTO gyroscope VALUES (?, ?, ?, ?, ?, ?)""", 
-                         (payload.userId, payload.timestamp, reading.timestamp, 
+            cursor.execute("""INSERT INTO gyroscope VALUES (?, ?, ?, ?, ?, ?)""",
+                         (payload.userId, payload.timestamp, reading.timestamp,
                           reading.x, reading.y, reading.z))
-        
+
         # Steps Data
         for hour, count in payload.steps.hourlyCounts.items():
-            cursor.execute("""INSERT OR IGNORE INTO steps VALUES (?, ?, ?, ?, ?)""", 
+            cursor.execute("""INSERT OR IGNORE INTO steps VALUES (?, ?, ?, ?, ?)""",
                          (payload.userId, payload.timestamp, payload.steps.date, hour, count))
-        
+
         # Sleep Sessions
         for session in payload.sleepSessions:
             summary = session.sessionSummary
-            # Handle optional endTime and durationMinutes fields
             end_time = getattr(summary, 'endTime', None)
             duration_minutes = getattr(summary, 'durationMinutes', None)
-            
-            cursor.execute("""INSERT OR IGNORE INTO sleep_sessions VALUES (?, ?, ?, ?, ?, ?)""", 
-                         (payload.userId, payload.timestamp, summary.healthConnectId, 
+
+            cursor.execute("""INSERT OR IGNORE INTO sleep_sessions VALUES (?, ?, ?, ?, ?, ?)""",
+                         (payload.userId, payload.timestamp, summary.healthConnectId,
                           summary.startTime, end_time, duration_minutes))
-            
+
             # Sleep Stages
             for stage in session.stages:
-                cursor.execute("""INSERT INTO sleep_stages (sessionId, type, startTime, endTime) VALUES (?, ?, ?, ?)""", 
+                cursor.execute("""INSERT INTO sleep_stages (sessionId, type, startTime, endTime) VALUES (?, ?, ?, ?)""",
                              (stage.sessionId, stage.type, stage.startTime, stage.endTime))
-        
+
         # Calorie Records
         for calorie in payload.calorieRecords:
-            cursor.execute("""INSERT OR IGNORE INTO calories VALUES (?, ?, ?, ?, ?, ?, ?)""", 
-                         (payload.userId, payload.timestamp, calorie.healthConnectId, 
+            cursor.execute("""INSERT OR IGNORE INTO calories VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                         (payload.userId, payload.timestamp, calorie.healthConnectId,
                           calorie.startTime, calorie.endTime, calorie.kilocalorias, calorie.tipo))
-        
+
         # Oxygen Saturation Records
         for oxygen in payload.oxygenSaturationRecords:
-            cursor.execute("""INSERT OR IGNORE INTO oxygen_saturation VALUES (?, ?, ?, ?)""", 
+            cursor.execute("""INSERT OR IGNORE INTO oxygen_saturation VALUES (?, ?, ?, ?)""",
                          (payload.userId, payload.timestamp, oxygen.timestamp, oxygen.spo2))
-        
+
+        # NOVO: Raw SpO2 Readings
+        for reading in payload.rawSpO2Readings:
+            cursor.execute("""INSERT INTO raw_spo2 VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                         (payload.userId, payload.timestamp, reading.timestamp,
+                          reading.raw, reading.a, reading.b, reading.c))
+
+        # NOVO: Raw PPG Readings
+        for reading in payload.rawPpgReadings:
+            cursor.execute("""INSERT INTO raw_ppg VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                         (payload.userId, payload.timestamp, reading.timestamp,
+                          reading.raw, reading.max, reading.min, reading.diff))
+
+        # NOVO: Ring Accelerometer Data
+        for reading in payload.ringAccelerometerReadings:
+            cursor.execute("""INSERT INTO ring_accelerometer VALUES (?, ?, ?, ?, ?, ?)""",
+                         (payload.userId, payload.timestamp, reading.timestamp,
+                          reading.x, reading.y, reading.z))
+
+
         conn.commit()
         print("Dados guardados com sucesso na base de dados SQLite.")
-        
+
     except Exception as e:
         conn.rollback()
         print(f"Erro ao guardar dados na base de dados: {e}")
@@ -223,36 +276,36 @@ def save_to_sql(payload: DetailedHealthAndSensorPayload):
 # --- FUNÇÕES DE ARMAZENAMENTO EM CSV ---
 def save_to_csv(payload: DetailedHealthAndSensorPayload):
     os.makedirs(CSV_DIR, exist_ok=True)
-    
+
     def append_to_file(filename: str, headers: List[str], data_rows: List[Dict]):
         file_path = os.path.join(CSV_DIR, filename)
         file_exists = os.path.isfile(file_path)
-        
+
         if data_rows:  # Only write if there's data
             with open(file_path, 'a', newline='') as f:
                 writer = csv.DictWriter(f, fieldnames=headers)
                 if not file_exists:
                     writer.writeheader()
                 writer.writerows(data_rows)
-    
+
     # Heart Rate Data
-    hr_data = [{**r.model_dump(), 'userId': payload.userId, 'requestTimestamp': payload.timestamp} 
+    hr_data = [{**r.model_dump(), 'userId': payload.userId, 'requestTimestamp': payload.timestamp}
                for r in payload.heartRateRecords]
     if hr_data:
         append_to_file("heart_rate.csv", list(hr_data[0].keys()), hr_data)
-    
-    # Accelerometer Data
-    accel_data = [{**r.model_dump(), 'userId': payload.userId, 'requestTimestamp': payload.timestamp} 
+
+    # Accelerometer Data (telefone)
+    accel_data = [{**r.model_dump(), 'userId': payload.userId, 'requestTimestamp': payload.timestamp}
                   for r in payload.accelerometerReadings]
     if accel_data:
         append_to_file("accelerometer.csv", list(accel_data[0].keys()), accel_data)
-    
+
     # Gyroscope Data
-    gyro_data = [{**r.model_dump(), 'userId': payload.userId, 'requestTimestamp': payload.timestamp} 
+    gyro_data = [{**r.model_dump(), 'userId': payload.userId, 'requestTimestamp': payload.timestamp}
                  for r in payload.gyroscopeReadings]
     if gyro_data:
         append_to_file("gyroscope.csv", list(gyro_data[0].keys()), gyro_data)
-    
+
     # Steps Data
     steps_data = []
     for hour, count in payload.steps.hourlyCounts.items():
@@ -265,7 +318,7 @@ def save_to_csv(payload: DetailedHealthAndSensorPayload):
         })
     if steps_data:
         append_to_file("steps.csv", ['userId', 'requestTimestamp', 'date', 'hour', 'count'], steps_data)
-    
+
     # Sleep Sessions Data
     sleep_data = []
     for session in payload.sleepSessions:
@@ -276,7 +329,7 @@ def save_to_csv(payload: DetailedHealthAndSensorPayload):
         })
     if sleep_data:
         append_to_file("sleep_sessions.csv", list(sleep_data[0].keys()), sleep_data)
-    
+
     # Sleep Stages Data
     stages_data = []
     for session in payload.sleepSessions:
@@ -288,19 +341,38 @@ def save_to_csv(payload: DetailedHealthAndSensorPayload):
             })
     if stages_data:
         append_to_file("sleep_stages.csv", list(stages_data[0].keys()), stages_data)
-    
+
     # Calorie Data
-    cal_data = [{**c.model_dump(), 'requestTimestamp': payload.timestamp} 
+    cal_data = [{**c.model_dump(), 'requestTimestamp': payload.timestamp}
                 for c in payload.calorieRecords]
     if cal_data:
         append_to_file("calories.csv", list(cal_data[0].keys()), cal_data)
-    
+
     # Oxygen Saturation Data
-    oxygen_data = [{**o.model_dump(), 'requestTimestamp': payload.timestamp} 
+    oxygen_data = [{**o.model_dump(), 'requestTimestamp': payload.timestamp}
                    for o in payload.oxygenSaturationRecords]
     if oxygen_data:
         append_to_file("oxygen_saturation.csv", list(oxygen_data[0].keys()), oxygen_data)
-    
+
+    # NOVO: Raw SpO2 Data
+    raw_spo2_data = [{**r.model_dump(), 'userId': payload.userId, 'requestTimestamp': payload.timestamp}
+                     for r in payload.rawSpO2Readings]
+    if raw_spo2_data:
+        append_to_file("raw_spo2.csv", list(raw_spo2_data[0].keys()), raw_spo2_data)
+
+    # NOVO: Raw PPG Data
+    raw_ppg_data = [{**r.model_dump(), 'userId': payload.userId, 'requestTimestamp': payload.timestamp}
+                    for r in payload.rawPpgReadings]
+    if raw_ppg_data:
+        append_to_file("raw_ppg.csv", list(raw_ppg_data[0].keys()), raw_ppg_data)
+
+    # NOVO: Ring Accelerometer Data
+    ring_accel_data = [{**r.model_dump(), 'userId': payload.userId, 'requestTimestamp': payload.timestamp}
+                       for r in payload.ringAccelerometerReadings]
+    if ring_accel_data:
+        append_to_file("ring_accelerometer.csv", list(ring_accel_data[0].keys()), ring_accel_data)
+
+
     print(f"Dados guardados com sucesso no diretório '{CSV_DIR}'.")
 
 # --- ENDPOINTS DA API ---
@@ -317,7 +389,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
             "message": error["msg"],
             "type": error["type"]
         })
-    
+
     return JSONResponse(
         status_code=422,
         content={
@@ -348,11 +420,11 @@ def upload_detailed_health_data(payload: DetailedHealthAndSensorPayload):
     with db_lock:
         try:
             original_user_id = payload.userId
-            
+
             # Anonimizar o payload antes de processar
             anonymous_payload = anonymize_payload(payload)
             anonymous_user_id = anonymous_payload.userId
-            
+
             print(f"--- Dados Recebidos ---")
             print(f"ID Original (não armazenado): {original_user_id}")
             print(f"ID Anônimo: {anonymous_user_id}")
@@ -360,20 +432,24 @@ def upload_detailed_health_data(payload: DetailedHealthAndSensorPayload):
             print(f"Sleep Sessions: {len(anonymous_payload.sleepSessions)}")
             print(f"Calorie Records: {len(anonymous_payload.calorieRecords)}")
             print(f"Oxygen Records: {len(anonymous_payload.oxygenSaturationRecords)}")
-            print(f"Accelerometer Readings: {len(anonymous_payload.accelerometerReadings)}")
+            print(f"Accelerometer Readings (Phone): {len(anonymous_payload.accelerometerReadings)}") # Renomeado para clareza
             print(f"Gyroscope Readings: {len(anonymous_payload.gyroscopeReadings)}")
-            
+            print(f"Raw SpO2 Readings (Ring): {len(anonymous_payload.rawSpO2Readings)}") # Novo log
+            print(f"Raw PPG Readings (Ring): {len(anonymous_payload.rawPpgReadings)}") # Novo log
+            print(f"Ring Accelerometer Readings: {len(anonymous_payload.ringAccelerometerReadings)}") # Novo log
+
+
             # Armazenar dados anonimizados
             save_to_sql(anonymous_payload)
             save_to_csv(anonymous_payload)
-            
+
             print("--- Processamento Concluído com Sucesso ---")
             return {
-                "status": "sucesso", 
+                "status": "sucesso",
                 "message": "Dados recebidos e guardados com sucesso (anonimizados).",
-                "anonymousUserId": anonymous_user_id  # Retorna o ID anônimo para referência
+                "anonymousUserId": anonymous_user_id
             }
-            
+
         except Exception as e:
             print(f"Erro ao processar o payload: {e}")
             raise HTTPException(status_code=500, detail=f"Ocorreu um erro interno: {e}")

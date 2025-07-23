@@ -28,14 +28,14 @@ class SleepStage(BaseModel):
     id: int
     sessionId: str
     type: int
-    startTime: str  # Usar string para datas ISO 8601
+    startTime: str  
     endTime: str
 
 class Sono(BaseModel):
     healthConnectId: str
     startTime: str
-    endTime: Optional[str] = None  # Added missing endTime field
-    durationMinutes: Optional[int] = None  # Added duration field
+    endTime: Optional[str] = None  
+    durationMinutes: Optional[int] = None  
     remSleepDurationMinutes: Optional[int] = None
     deepSleepDurationMinutes: Optional[int] = None
     lightSleepDurationMinutes: Optional[int] = None
@@ -61,6 +61,26 @@ class OxigenacaoSanguinea(BaseModel):
     zoneOffset: Optional[str] = None
     userId: str
 
+class RawSpO2Data(BaseModel):
+    timestamp: int
+    raw: int
+    a: int
+    b: int
+    c: int
+
+class RawPpgData(BaseModel):
+    timestamp: int
+    raw: int
+    max: int
+    min: int
+    diff: int
+
+class RingAccelerometerData(BaseModel):
+    timestamp: int
+    x: float
+    y: float
+    z: float
+
 class DetailedHealthAndSensorPayload(BaseModel):
     userId: str
     timestamp: int
@@ -71,3 +91,6 @@ class DetailedHealthAndSensorPayload(BaseModel):
     oxygenSaturationRecords: List[OxigenacaoSanguinea]
     accelerometerReadings: List[AccelerometerData]
     gyroscopeReadings: List[GyroscopeData]
+    rawSpO2Readings: List[RawSpO2Data] = Field(default_factory=list)
+    rawPpgReadings: List[RawPpgData] = Field(default_factory=list)
+    ringAccelerometerReadings: List[RingAccelerometerData] = Field(default_factory=list)
