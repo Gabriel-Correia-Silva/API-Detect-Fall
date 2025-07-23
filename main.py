@@ -18,7 +18,7 @@ CSV_DIR = "csv_data"
 
 # Chave secreta para gerar hashes consistentes dos userIds
 # IMPORTANTE: Altere esta chave em produção e mantenha-a secreta!
-SECRET_KEY = "your-secret-key-change-this-in-production-2024"
+SECRET_KEY = "sua-chave-secreta-super-forte-aqui-2024"
 
 # Criar um Lock global para controlar o acesso aos ficheiros
 db_lock = threading.Lock()
